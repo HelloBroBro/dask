@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import itertools
 import multiprocessing as mp
 import os
@@ -278,8 +279,12 @@ def test_set_index_self_index(shuffle_method):
     )
 
     a = dd.from_pandas(df, npartitions=4)
-    warn = None if DASK_EXPR_ENABLED else UserWarning
-    with pytest.warns(warn, match="this is a no-op"):
+    if DASK_EXPR_ENABLED:
+        ctx = contextlib.nullcontext()
+    else:
+        ctx = pytest.warns(UserWarning, match="this is a no-op")
+
+    with ctx:
         b = a.set_index(a.index, shuffle_method=shuffle_method)
     assert a is b
 
@@ -314,7 +319,6 @@ def test_set_index_names(shuffle_method):
 ME = "ME" if PANDAS_GE_220 else "M"
 
 
-@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="no demo module")
 def test_set_index_2(shuffle_method):
     df = dd.demo.make_timeseries(
         "2000",
@@ -997,9 +1001,6 @@ def test_set_index_sorted_single_partition():
     assert_eq(ddf.set_index("x", sorted=True), df.set_index("x"))
 
 
-@pytest.mark.skipif(
-    DASK_EXPR_ENABLED, reason="we don't do division inference for sorted=True"
-)
 def test_set_index_sorted_min_max_same():
     a = pd.DataFrame({"x": [1, 2, 3], "y": [0, 0, 0]})
     b = pd.DataFrame({"x": [1, 2, 3], "y": [1, 1, 1]})
@@ -1424,9 +1425,7 @@ def test_shuffle_partitions_meta_dtype():
     # Disk-based shuffle doesn't use HLG layers at the moment, so we only test tasks
     ddf_shuffled = ddf.shuffle(ddf["a"] % 10, max_branch=3, shuffle_method="tasks")
     # Cull the HLG
-    if DASK_EXPR_ENABLED:
-        dsk = ddf_shuffled.optimize().__dask_graph__()
-    else:
+    if not DASK_EXPR_ENABLED:
         dsk = ddf_shuffled.__dask_graph__()
 
         for layer in dsk.layers.values():
@@ -1582,6 +1581,7 @@ def test_sort_values(nelem, by, ascending):
     dd.assert_eq(got, expect, check_index=False, sort_results=False)
 
 
+@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="not deprecated")
 def test_sort_values_deprecated_shuffle_keyword(shuffle_method):
     np.random.seed(0)
     df = pd.DataFrame()
@@ -1589,8 +1589,7 @@ def test_sort_values_deprecated_shuffle_keyword(shuffle_method):
     df["b"] = np.arange(100, 10 + 100)
     ddf = dd.from_pandas(df, npartitions=10)
 
-    warn = None if DASK_EXPR_ENABLED else FutureWarning
-    with pytest.warns(warn, match="'shuffle' keyword is deprecated"):
+    with pytest.warns(FutureWarning, match="'shuffle' keyword is deprecated"):
         got = ddf.sort_values(by=["a"], shuffle=shuffle_method)
     expect = df.sort_values(by=["a"])
     dd.assert_eq(got, expect, check_index=False, sort_results=False)
@@ -1617,12 +1616,13 @@ def test_sort_values_tasks_backend(backend, by, ascending):
     )
     dd.assert_eq(got, expect, sort_results=False)
 
-    warn = None if DASK_EXPR_ENABLED else FutureWarning
-    with pytest.warns(warn, match="'shuffle' keyword is deprecated"):
+    if DASK_EXPR_ENABLED:
+        return
+    with pytest.warns(FutureWarning, match="'shuffle' keyword is deprecated"):
         got = dd.DataFrame.sort_values(ddf, by=by, ascending=ascending, shuffle="tasks")
     dd.assert_eq(got, expect, sort_results=False)
 
-    with pytest.warns(warn, match="'shuffle' keyword is deprecated"):
+    with pytest.warns(FutureWarning, match="'shuffle' keyword is deprecated"):
         got = ddf.sort_values(by=by, ascending=ascending, shuffle="tasks")
     dd.assert_eq(got, expect, sort_results=False)
 
@@ -1720,8 +1720,18 @@ def test_sort_values_bool_ascending():
     ddf = dd.from_pandas(df, npartitions=10)
 
     # attempt to sort with list of ascending booleans
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="length"):
         ddf.sort_values(by="a", ascending=[True, False])
+    with pytest.raises(ValueError, match="length"):
+        ddf.sort_values(by=["a", "b"], ascending=[True])
+    assert_eq(
+        ddf.sort_values(by="a", ascending=[True]),
+        df.sort_values(by="a", ascending=[True]),
+    )
+    assert_eq(
+        ddf.sort_values(by=["a", "b"], ascending=[True, False]),
+        df.sort_values(by=["a", "b"], ascending=[True, False]),
+    )
 
 
 @pytest.mark.parametrize("npartitions", [1, 3])

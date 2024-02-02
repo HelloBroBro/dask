@@ -96,14 +96,14 @@ def _drop_mean(df, col=None):
     return df
 
 
-@pytest.mark.skipif(dd._dask_expr_enabled(), reason="not yet supported")
+@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="not yet supported")
 def test_dataframe_doc():
     doc = d.add.__doc__
     disclaimer = "Some inconsistencies with the Dask version may exist."
     assert disclaimer in doc
 
 
-@pytest.mark.skipif(dd._dask_expr_enabled(), reason="not yet supported")
+@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="not yet supported")
 def test_dataframe_doc_from_non_pandas():
     class Foo:
         def foo(self):
@@ -404,12 +404,12 @@ def test_rename_series_method_2():
     assert_eq(res, s.rename(s))
     assert not res.known_divisions
 
-    if not DASK_EXPR_ENABLED:
-        ds2 = ds.clear_divisions()
-        res = ds2.rename(lambda x: x**2, sorted_index=True)
-        assert_eq(res, s.rename(lambda x: x**2))
-        assert not res.known_divisions
+    ds2 = ds.clear_divisions()
+    res = ds2.rename(lambda x: x**2, sorted_index=True)
+    assert_eq(res, s.rename(lambda x: x**2))
+    assert not res.known_divisions
 
+    if not DASK_EXPR_ENABLED:
         with pytest.warns(FutureWarning, match="inplace"):
             res = ds.rename(lambda x: x**2, inplace=True, sorted_index=True)
         assert res is ds
@@ -727,13 +727,12 @@ def test_cumulative_out(cls):
         ddf.cummax(out=ddf_out)
     assert_eq(ddf_out, df.cummax())
 
-    if not DASK_EXPR_ENABLED:
-        with ctx:
-            np.cumsum(ddf, out=ddf_out)
-        assert_eq(ddf_out, df.cumsum())
-        with ctx:
-            np.cumprod(ddf, out=ddf_out)
-        assert_eq(ddf_out, df.cumprod())
+    with ctx:
+        np.cumsum(ddf, out=ddf_out)
+    assert_eq(ddf_out, df.cumsum())
+    with ctx:
+        np.cumprod(ddf, out=ddf_out)
+    assert_eq(ddf_out, df.cumprod())
 
 
 def test_cumulative_with_nans():
@@ -1262,6 +1261,7 @@ def test_drop_duplicates(shuffle_method):
     res2 = d.index.drop_duplicates(split_every=2, shuffle_method=shuffle_method)
     sol = full.index.drop_duplicates()
     if DASK_EXPR_ENABLED:
+        # we shuffle in dask-expr and assert_eq doesn't sort indexes
         assert_eq(res.compute().sort_values(), sol)
         assert_eq(res2.compute().sort_values(), sol)
     else:
@@ -2642,8 +2642,13 @@ def test_fillna():
 
     pytest.raises(ValueError, lambda: ddf.A.fillna(0, axis=1))
     if not DASK_EXPR_ENABLED:
+        # this is deprecated in dask-expr
         pytest.raises(NotImplementedError, lambda: ddf.fillna(0, limit=10))
         pytest.raises(NotImplementedError, lambda: ddf.fillna(0, limit=10, axis=1))
+
+    if not DASK_EXPR_ENABLED:
+        with pytest.warns(FutureWarning, match="'method' keyword is deprecated"):
+            ddf.fillna(method="ffill")
 
 
 def test_ffill():
@@ -3229,7 +3234,6 @@ def test_drop_meta_mismatch():
     assert_eq(df.drop(columns=["x"]), ddf.drop(columns=["x"]))
 
 
-@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="FIXME hanging - don't know why")
 def test_gh580():
     df = pd.DataFrame({"x": np.arange(10, dtype=float)})
     ddf = dd.from_pandas(df, 2)
@@ -3486,18 +3490,26 @@ def test_applymap():
     df = pd.DataFrame({"x": [1, 2, 3, 4], "y": [10, 20, 30, 40]})
     ddf = dd.from_pandas(df, npartitions=2)
     msg = "DataFrame.applymap has been deprecated"
-    warning = FutureWarning if PANDAS_GE_210 else None
-    with pytest.warns(warning, match=msg):
-        ddf_result = ddf.applymap(lambda x: x + 1)
-    with pytest.warns(warning, match=msg):
-        pdf_result = df.applymap(lambda x: x + 1)
-    assert_eq(ddf_result, pdf_result)
+    if PANDAS_GE_210:
+        with pytest.warns(FutureWarning, match=msg):
+            ddf_result = ddf.applymap(lambda x: x + 1)
+        with pytest.warns(FutureWarning, match=msg):
+            pdf_result = df.applymap(lambda x: x + 1)
+        assert_eq(ddf_result, pdf_result)
 
-    with pytest.warns(warning, match=msg):
+        with pytest.warns(FutureWarning, match=msg):
+            ddf_result = ddf.applymap(lambda x: (x, x))
+        with pytest.warns(FutureWarning, match=msg):
+            pdf_result = df.applymap(lambda x: (x, x))
+        assert_eq(ddf_result, pdf_result)
+    else:
+        ddf_result = ddf.applymap(lambda x: x + 1)
+        pdf_result = df.applymap(lambda x: x + 1)
+        assert_eq(ddf_result, pdf_result)
+
         ddf_result = ddf.applymap(lambda x: (x, x))
-    with pytest.warns(warning, match=msg):
         pdf_result = df.applymap(lambda x: (x, x))
-    assert_eq(ddf_result, pdf_result)
+        assert_eq(ddf_result, pdf_result)
 
 
 def test_add_prefix():
@@ -4329,11 +4341,15 @@ def test_set_index_with_index():
     "Setting the index with the existing index is a no-op"
     df = pd.DataFrame({"x": [1, 2, 3, 4], "y": [1, 0, 1, 0]}).set_index("x")
     ddf = dd.from_pandas(df, npartitions=2)
-    warn = UserWarning if not DASK_EXPR_ENABLED else None
-    with pytest.warns(warn, match="this is a no-op"):
+    if DASK_EXPR_ENABLED:
+        ctx = contextlib.nullcontext()
+    else:
+        ctx = pytest.warns(UserWarning, match="this is a no-op")
+
+    with ctx:
         ddf2 = ddf.set_index(ddf.index)
     assert ddf2 is ddf
-    with pytest.warns(warn, match="this is a no-op"):
+    with ctx:
         ddf = ddf.set_index("x", drop=False)
     assert ddf2 is ddf
 
@@ -4882,19 +4898,19 @@ def test_values_extension_dtypes():
     ddf = dd.from_pandas(df, npartitions=2)
 
     assert_eq(df.values, ddf.values)
-    warn = UserWarning if not DASK_EXPR_ENABLED else None
-    with pytest.warns(warn, match="object dtype"):
+
+    with pytest.warns(UserWarning, match="object dtype"):
         result = ddf.x.values
     assert_eq(result, df.x.values.astype(object))
 
-    with pytest.warns(warn, match="object dtype"):
+    with pytest.warns(UserWarning, match="object dtype"):
         result = ddf.y.values
     assert_eq(result, df.y.values.astype(object))
 
     # Prior to pandas=1.4, `pd.Index` couldn't hold extension dtypes
     ctx = contextlib.nullcontext()
     if PANDAS_GE_140:
-        ctx = pytest.warns(warn, match="object dtype")
+        ctx = pytest.warns(UserWarning, match="object dtype")
     with ctx:
         result = ddf.index.values
     assert_eq(result, df.index.values.astype(object))

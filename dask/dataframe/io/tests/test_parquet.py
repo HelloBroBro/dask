@@ -724,9 +724,8 @@ def test_categorical(tmpdir, write_engine, read_engine):
     # dereference cats
     ddf2 = dd.read_parquet(tmp, categories=[], engine=read_engine)
 
-    if not DASK_EXPR_ENABLED:
-        ddf2.loc[:1000].compute()
-        assert (df.x == ddf2.x.compute()).all()
+    ddf2.loc[:1000].compute()
+    assert (df.x == ddf2.x.compute()).all()
 
 
 @pytest.mark.xfail(DASK_EXPR_ENABLED, reason="will be supported after string option")
@@ -789,7 +788,8 @@ def test_append_create(tmpdir, engine):
     assert_eq(df, ddf3)
 
 
-def test_append_with_partition(tmpdir, engine):
+@PYARROW_MARK
+def test_append_with_partition(tmpdir):
     tmp = str(tmpdir)
     df0 = pd.DataFrame(
         {
@@ -816,18 +816,18 @@ def test_append_with_partition(tmpdir, engine):
 
     dd_df0 = dd.from_pandas(df0, npartitions=1)
     dd_df1 = dd.from_pandas(df1, npartitions=1)
-    dd.to_parquet(dd_df0, tmp, partition_on=["lon"], engine=engine)
+    dd.to_parquet(dd_df0, tmp, partition_on=["lon"], engine="pyarrow")
     dd.to_parquet(
         dd_df1,
         tmp,
         partition_on=["lon"],
         append=True,
         ignore_divisions=True,
-        engine=engine,
+        engine="pyarrow",
     )
 
     out = dd.read_parquet(
-        tmp, engine=engine, index="index", calculate_divisions=True
+        tmp, engine="pyarrow", index="index", calculate_divisions=True
     ).compute()
     # convert categorical to plain int just to pass assert
     out["lon"] = out.lon.astype("int64")
@@ -1581,11 +1581,9 @@ def test_filters(tmpdir, write_engine, read_engine):
     assert d.npartitions == 3
     assert ((d.x > 1) & (d.x < 8)).all().compute()
 
-    if not DASK_EXPR_ENABLED:
-        # TODO: this doesn't reduce the partition count
-        e = dd.read_parquet(tmp_path, engine=read_engine, filters=[("x", "in", (0, 9))])
-        assert e.npartitions == 2
-        assert ((e.x < 2) | (e.x > 7)).all().compute()
+    e = dd.read_parquet(tmp_path, engine=read_engine, filters=[("x", "in", (0, 9))])
+    assert e.npartitions == 2
+    assert ((e.x < 2) | (e.x > 7)).all().compute()
 
     f = dd.read_parquet(tmp_path, engine=read_engine, filters=[("y", "=", "c")])
     assert f.npartitions == 1
@@ -1707,7 +1705,6 @@ def test_filters_file_list(tmpdir, engine):
     assert_eq(df[df["x"] > 3], ddf3, check_index=False)
 
 
-@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="not supported yet")
 @PYARROW_MARK
 def test_pyarrow_filter_divisions(tmpdir):
     # Write simple dataset with an index that will only
@@ -1797,7 +1794,6 @@ def test_divisions_are_known_read_with_filters(tmpdir):
     assert out.divisions == expected_divisions
 
 
-@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="circular import")
 @pytest.mark.parametrize("scheduler", ["threads", "processes"])
 def test_to_parquet_lazy(tmpdir, scheduler, engine):
     tmpdir = str(tmpdir)
@@ -2763,11 +2759,7 @@ def test_split_row_groups(tmpdir, engine):
     ddf3 = dd.read_parquet(
         tmp, engine=engine, calculate_divisions=True, split_row_groups=False
     )
-    if DASK_EXPR_ENABLED:
-        assert ddf3.npartitions == 2
-
-    else:
-        assert ddf3.npartitions == 4
+    assert ddf3.npartitions == 4
 
 
 @PYARROW_MARK
@@ -3003,8 +2995,11 @@ def test_split_adaptive_files(tmpdir, blocksize, partition_on, metadata):
 
     aggregate_files = partition_on if partition_on else True
     if isinstance(aggregate_files, str):
-        warn = None if DASK_EXPR_ENABLED else FutureWarning
-        with pytest.warns(warn, match="Behavior may change"):
+        if DASK_EXPR_ENABLED:
+            ctx = contextlib.nullcontext()
+        else:
+            ctx = pytest.warns(FutureWarning, match="Behavior may change")
+        with ctx:
             ddf2 = dd.read_parquet(
                 str(tmpdir),
                 engine="pyarrow",
@@ -3062,8 +3057,11 @@ def test_split_adaptive_aggregate_files(
         partition_on=partition_on,
         write_index=False,
     )
-    warn = None if DASK_EXPR_ENABLED else FutureWarning
-    with pytest.warns(warn, match="Behavior may change"):
+    if DASK_EXPR_ENABLED:
+        ctx = contextlib.nullcontext()
+    else:
+        ctx = pytest.warns(FutureWarning, match="Behavior may change")
+    with ctx:
         ddf2 = dd.read_parquet(
             str(tmpdir),
             engine=read_engine,
@@ -3630,7 +3628,6 @@ def test_pyarrow_dataset_partitioned(tmpdir, engine, test_filter):
         assert_eq(ddf, read_df)
 
 
-@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="circular import")
 @PYARROW_MARK
 @pytest.mark.parametrize("scheduler", [None, "processes"])
 def test_null_partition_pyarrow(tmpdir, scheduler):
@@ -3678,8 +3675,12 @@ def test_pyarrow_dataset_read_from_paths(tmpdir):
     ddf = dd.from_pandas(df, npartitions=2)
     ddf.to_parquet(fn, partition_on="b")
 
-    warn = None if DASK_EXPR_ENABLED else FutureWarning
-    with pytest.warns(warn):
+    if DASK_EXPR_ENABLED:
+        ctx = contextlib.nullcontext()
+    else:
+        ctx = pytest.warns(FutureWarning)
+
+    with ctx:
         read_df_1 = dd.read_parquet(
             fn, filters=[("b", "==", "a")], read_from_paths=False
         )
@@ -3785,7 +3786,7 @@ def test_parquet_pyarrow_write_empty_metadata(tmpdir):
     assert pandas_metadata.get("index_columns", False)
 
 
-@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="Can't hash at the moment")
+@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="Can't hash metadata file at the moment")
 @PYARROW_MARK
 def test_parquet_pyarrow_write_empty_metadata_append(tmpdir):
     # https://github.com/dask/dask/issues/6600
@@ -4347,7 +4348,7 @@ def test_custom_filename(tmpdir, engine):
     assert_eq(df, dd.read_parquet(fn, engine=engine, calculate_divisions=True))
 
 
-@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="Can't hash at the moment")
+@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="Can't hash metadata file at the moment")
 @PYARROW_MARK
 def test_custom_filename_works_with_pyarrow_when_append_is_true(tmpdir):
     fn = str(tmpdir)
@@ -4559,6 +4560,7 @@ def test_in_predicate_requires_an_iterable(tmp_path, engine, filter_value):
         dd.read_parquet(path, engine=engine, filters=filter_value)
 
 
+@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="enforced deprecation")
 def test_deprecate_gather_statistics(tmp_path, engine):
     # The `gather_statistics` deprecation warning
     # (and this test) should be removed after a
@@ -4567,8 +4569,7 @@ def test_deprecate_gather_statistics(tmp_path, engine):
     df = pd.DataFrame({"a": range(10)})
     path = tmp_path / "test_deprecate_gather_statistics.parquet"
     df.to_parquet(path, engine=engine)
-    warn = None if DASK_EXPR_ENABLED else FutureWarning
-    with pytest.warns(warn, match="deprecated"):
+    with pytest.warns(FutureWarning, match="deprecated"):
         out = dd.read_parquet(path, engine=engine, gather_statistics=True)
     assert_eq(out, df)
 
@@ -4726,13 +4727,16 @@ def test_select_filtered_column(tmp_path, engine):
         df.to_parquet(path, index=False, stats=True, engine="fastparquet")
     else:
         df.to_parquet(path, index=False, write_statistics=True)
+    if DASK_EXPR_ENABLED:
+        ctx = contextlib.nullcontext()
+    else:
+        ctx = pytest.warns(UserWarning, match="Sorted columns detected")
 
-    warn = None if DASK_EXPR_ENABLED else UserWarning
-    with pytest.warns(warn, match="Sorted columns detected"):
+    with ctx:
         ddf = dd.read_parquet(path, engine=engine, filters=[("b", "==", "cat")])
         assert_eq(df, ddf)
 
-    with pytest.warns(warn, match="Sorted columns detected"):
+    with ctx:
         ddf = dd.read_parquet(path, engine=engine, filters=[("b", "is not", None)])
         assert_eq(df, ddf)
 
