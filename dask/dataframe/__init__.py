@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+
 
 def _dask_expr_enabled() -> bool:
     import dask
@@ -157,6 +159,32 @@ else:
             '  python -m pip install "dask[dataframe]" --upgrade  # or python -m pip install'
         )
         raise ImportError(msg) from e
+    warnings.warn(
+        """The current Dask DataFrame implementation is deprecated. 
+In a future release, Dask DataFrame will use new implementation that
+contains several improvements including a logical query planning.
+The user-facing DataFrame API will remain unchanged.
+
+The new implementation is already available and can be enabled by
+installing the dask-expr library:
+
+    $ pip install dask-expr
+
+and turning the query planning option on:
+
+    >>> import dask
+    >>> dask.config.set({'dataframe.query-planning': True})
+    >>> import dask.dataframe as dd
+
+API documentation for the new implementation is available at
+https://docs.dask.org/en/stable/dask-expr-api.html
+
+Any feedback can be reported on the Dask issue tracker
+https://github.com/dask/dask/issues 
+""",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
 
 from dask.dataframe._testing import test_dataframe
