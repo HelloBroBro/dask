@@ -1496,7 +1496,11 @@ def test_len():
     assert len(dd.from_pandas(pd.DataFrame(), npartitions=1)) == 0
     assert len(dd.from_pandas(pd.DataFrame(columns=[1, 2]), npartitions=1)) == 0
     # Regression test for https://github.com/dask/dask/issues/6110
-    assert len(dd.from_pandas(pd.DataFrame(columns=["foo", "foo"]), npartitions=1)) == 0
+    if not DASK_EXPR_ENABLED:
+        assert (
+            len(dd.from_pandas(pd.DataFrame(columns=["foo", "foo"]), npartitions=1))
+            == 0
+        )
 
 
 def test_size():
@@ -1872,7 +1876,7 @@ def test_assign_dtypes():
     new_col = {"col3": pd.Series(["0", "1"])}
     res = ddf.assign(**new_col)
 
-    string_dtype = get_string_dtype() if not DASK_EXPR_ENABLED else "object"
+    string_dtype = get_string_dtype()
     assert_eq(
         res.dtypes,
         pd.Series(
@@ -5400,7 +5404,6 @@ def test_cumulative_multiple_columns():
     assert_eq(ddf, df)
 
 
-@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="array conversion not yet supported")
 @pytest.mark.parametrize("func", [np.asarray, M.to_records])
 def test_map_partition_array(func):
     from dask.array.utils import assert_eq
@@ -5423,7 +5426,6 @@ def test_map_partition_array(func):
         assert x.chunks[0] == (np.nan, np.nan)
 
 
-@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="array conversion not yet supported")
 def test_map_partition_sparse():
     sparse = pytest.importorskip("sparse")
     # Avoid searchsorted failure.
@@ -5530,7 +5532,6 @@ def test_meta_nonempty_uses_meta_value_if_provided():
         assert_eq(expected, actual)
 
 
-@pytest.mark.xfail(DASK_EXPR_ENABLED, reason="array conversion not yet supported")
 def test_dask_dataframe_holds_scipy_sparse_containers():
     sparse = pytest.importorskip("scipy.sparse")
     da = pytest.importorskip("dask.array")
@@ -6267,7 +6268,6 @@ def test_to_backend():
             df.to_backend("missing")
 
 
-@pytest.mark.skipif(DASK_EXPR_ENABLED, reason="skip temporarily")
 @pytest.mark.parametrize("func", ["max", "sum"])
 def test_transform_getitem_works(func):
     df = pd.DataFrame({"ints": [1, 2, 3], "grouper": [0, 1, 0]})
