@@ -6,6 +6,7 @@ import random
 import sys
 from array import array
 
+from packaging.version import Version
 from packaging.version import parse as parse_version
 
 from dask._compatibility import importlib_metadata
@@ -256,6 +257,43 @@ def register_pyarrow():
     @sizeof.register(pa.ChunkedArray)
     def sizeof_pyarrow_chunked_array(data):
         return int(_get_col_size(data)) + 1000
+
+
+@sizeof.register_lazy("xarray")
+def register_xarray():
+    import sys
+
+    import xarray as xr
+
+    XARRAY_VERSION = Version(xr.__version__)
+    XARRAY_GE_2024_02 = XARRAY_VERSION >= Version("2024.02.0")
+
+    @sizeof.register(xr.DataArray)
+    @sizeof.register(xr.Dataset)
+    def xarray_sizeof_da(obj):
+        return obj.nbytes
+
+    if XARRAY_GE_2024_02:
+        xarray_sizeof_da = sizeof.register(xr.NamedArray)(xarray_sizeof_da)
+
+    @sizeof.register(xr.core.indexes.Indexes)
+    def xarray_sizeof_indexes(obj):
+        return (
+            sys.getsizeof(obj)
+            + sizeof(obj._index_type)
+            + sizeof(obj._indexes)
+            + sizeof(obj._variables)
+            + sizeof(obj._dims)
+        )
+
+    @sizeof.register(xr.core.indexes.PandasIndex)
+    def xarray_sizeof_pd_index(obj):
+        return (
+            sys.getsizeof(obj)
+            + sizeof(obj.index)
+            + sizeof(obj.dim)
+            + sizeof(obj.coord_dtype)
+        )
 
 
 def _register_entry_point_plugins():
