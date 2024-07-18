@@ -36,6 +36,7 @@ from dask.dataframe.core import (
     repartition_divisions,
     total_mem_usage,
 )
+from dask.dataframe.dispatch import meta_nonempty
 from dask.dataframe.utils import (
     assert_eq,
     assert_eq_dtypes,
@@ -6308,6 +6309,20 @@ def test_enforce_runtime_divisions():
             ddf.enforce_runtime_divisions().compute()
 
 
+def test_preserve_ts_unit_in_meta_creation():
+    pdf = pd.DataFrame(
+        {
+            "a": [1],
+            "timestamp": pd.Series(
+                [pd.Timestamp.utcnow()], dtype="datetime64[us, UTC]"
+            ),
+        }
+    )
+    df = dd.from_pandas(pdf, npartitions=1)
+    assert_eq(meta_nonempty(df._meta).dtypes, pdf.dtypes)
+    assert_eq(df, pdf)
+
+
 def test_query_planning_config_warns():
     # Make sure dd._dask_expr_enabled() warns if the current
     # "dataframe.query-planning" config conflicts with the
@@ -6316,3 +6331,23 @@ def test_query_planning_config_warns():
         expect = "enabled" if dd.DASK_EXPR_ENABLED else "disabled"
         with pytest.warns(match=f"query planning is already {expect}"):
             dd._dask_expr_enabled()
+
+
+def test_dataframe_into_delayed():
+    if not DASK_EXPR_ENABLED:
+        pytest.skip("Only relevant for dask.expr")
+
+    pdf = pd.DataFrame({"a": [1, 2, 3], "b": 1})
+    df = dd.from_pandas(pdf, npartitions=2)
+
+    def test_func(df):
+        return df.sum().sum()
+
+    def delayed_func(i):
+        # sanity check
+        assert i.sum() == 6
+
+    df = df[["a"]].map_partitions(test_func, meta=(None, int))
+    result = delayed(delayed_func)(df)
+    assert sum(map(len, result.dask.layers.values())) == 6
+    result.compute()
