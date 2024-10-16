@@ -341,6 +341,27 @@ def test_runnable_as_kwarg():
     assert t() == "ab3"
 
 
+def test_dependency_as_kwarg():
+    def func_kwarg(a, b, c=""):
+        return a + b + str(c)
+
+    t1 = Task("key-1", sum, [1, 2])
+    t2 = Task(
+        "key-2",
+        func_kwarg,
+        "a",
+        "b",
+        c=t1.ref(),
+    )
+    with pytest.raises(RuntimeError, match="missing"):
+        t2()
+    # It isn't sufficient to raise. We also rely on the attribute being set
+    # properly since distribute will use this to infer actual dependencies The
+    # exception may be raised recursively
+    assert t2.dependencies
+    assert t2({"key-1": t1()}) == "ab3"
+
+
 def test_subgraph_callable():
     def add(a, b):
         return a + b
@@ -724,3 +745,8 @@ def test_execute_tasks_in_graph():
     res = execute_graph(dsk)
     assert len(res) == 1
     assert res["key-4"] == "foo-bar-a-b=c"
+
+
+def test_deterministic_tokenization_respected():
+    with pytest.raises(RuntimeError, match="deterministic"):
+        tokenize(Task("key", func, object()), ensure_deterministic=True)
