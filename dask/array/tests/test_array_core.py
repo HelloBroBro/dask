@@ -10,6 +10,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
+import itertools
 import math
 import operator
 import os
@@ -870,6 +871,10 @@ def test_broadcast_shapes():
     assert (3, 4, 5) == broadcast_shapes((3, 4, 5), (4, 1), ())
     assert (3, 4) == broadcast_shapes((3, 1), (1, 4), (4,))
     assert (5, 6, 7, 3, 4) == broadcast_shapes((3, 1), (), (5, 6, 7, 1, 4))
+
+    assert all(
+        isinstance(i, int) for i in itertools.chain(*broadcast_shapes([(1, 2), (3, 1)]))
+    )
 
     pytest.raises(ValueError, lambda: broadcast_shapes((3,), (3, 4)))
     pytest.raises(ValueError, lambda: broadcast_shapes((2, 3), (2, 3, 1)))
@@ -4903,6 +4908,30 @@ def test_dask_array_holds_scipy_sparse_containers():
     zz = z.compute(scheduler="single-threaded")
     assert isinstance(zz, scipy.sparse.spmatrix)
     assert (zz == xx.T).all()
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        [5, 8],
+        0,
+        slice(5, 8),
+        np.array([5, 8]),
+        np.array([True, False] * 500),
+        [True, False] * 500,
+    ],
+)
+@pytest.mark.parametrize("sparse_module_path", ["scipy.sparse", "cupyx.scipy.sparse"])
+def test_scipy_sparse_indexing(index, sparse_module_path):
+    sp = pytest.importorskip(sparse_module_path)
+    x = da.random.default_rng().random((1000, 10), chunks=(100, 10))
+    x[x < 0.9] = 0
+    y = x.map_blocks(sp.csr_matrix)
+
+    assert not (
+        x[index, :].compute(scheduler="single-threaded")
+        != y[index, :].compute(scheduler="single-threaded")
+    ).sum()
 
 
 @pytest.mark.parametrize("axis", [0, 1])
