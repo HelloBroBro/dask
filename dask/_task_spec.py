@@ -199,7 +199,7 @@ def _execute_subgraph(inner_dsk, outkey, inkeys, external_deps):
         final[k] = DataNode(None, v)
     for k, v in external_deps.items():
         final[k] = DataNode(None, v)
-    res = execute_graph(final)
+    res = execute_graph(final, keys=[outkey])
     return res[outkey]
 
 
@@ -691,6 +691,30 @@ class Task(GraphNode):
             except Exception:
                 self._is_coro = False
         return self._is_coro
+
+    @staticmethod
+    def fuse(*tasks: Task, key: KeyType | None = None) -> Task:
+        leafs = set()
+        all_keys = set()
+        all_deps: set[KeyType] = set()
+        for t in tasks:
+            all_deps.update(t.dependencies)
+            all_keys.add(t.key)
+        external_deps = all_deps - all_keys
+        leafs = all_keys - all_deps
+        if len(leafs) > 1:
+            raise ValueError("Cannot fuse tasks with multiple outputs")
+
+        outkey = leafs.pop()
+
+        return Task(
+            key or outkey,
+            _execute_subgraph,
+            DataNode(None, {t.key: t for t in tasks}),
+            outkey,
+            {k: Alias(k) for k in external_deps},
+            {},
+        )
 
 
 class DependenciesMapping(MutableMapping):
